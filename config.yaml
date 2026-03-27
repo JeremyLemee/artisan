@@ -1,0 +1,31 @@
+# LLM Provider Configuration
+
+# Active provider: anthropic, openai, or gemini
+provider: anthropic
+
+# Provider-specific settings
+anthropic:
+  model: claude-sonnet-4-20250514
+  max_tokens: 1024
+  temperature: 0.7
+
+openai:
+  model: gpt-4o
+  max_tokens: 1024
+  temperature: 0.7
+
+gemini:
+  model: gemini-1.5-pro
+  max_tokens: 1024
+  temperature: 0.7
+
+# Logging settings
+logging:
+  output_dir: responses
+  format: json  # json or text
+
+# ReAct agent settings
+react:
+  max_iterations: 10
+  enable_tool_creation: true
+  generated_tools_dir: tools/generated

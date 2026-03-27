@@ -1,6 +1,6 @@
 """
 Baseline LLM prompting - direct prompting without ReAct framework.
-Supports Anthropic, OpenAI, and Gemini APIs.
+Supports Anthropic, OpenAI, Gemini, and Ollama APIs.
 Used for comparison against the ReAct agent.
 """
 
@@ -43,6 +43,25 @@ def prompt_openai(prompt: str, config: dict) -> str:
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     settings = config["openai"]
+
+    response = client.chat.completions.create(
+        model=settings["model"],
+        max_tokens=settings["max_tokens"],
+        temperature=settings["temperature"],
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+
+def prompt_ollama(prompt: str, config: dict) -> str:
+    """Send prompt to a local Ollama instance using its OpenAI-compatible API."""
+    from openai import OpenAI
+
+    settings = config["ollama"]
+    client = OpenAI(
+        base_url=settings.get("base_url", "http://localhost:11434/v1"),
+        api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+    )
 
     response = client.chat.completions.create(
         model=settings["model"],
@@ -106,7 +125,7 @@ def log_response(
             f.write(f"Timestamp: {timestamp.isoformat()}\n")
             f.write(f"Provider: {provider}\n")
             f.write(f"Model: {model}\n")
-            f.write(f"Mode: baseline\n")
+            f.write("Mode: baseline\n")
             f.write(f"Task:\n{prompt}\n")
             f.write(f"\nResponse:\n{response}\n")
 
@@ -125,7 +144,8 @@ def prompt_llm(prompt: str, config_path: str = "config/config.yaml") -> dict:
     providers = {
         "anthropic": prompt_anthropic,
         "openai": prompt_openai,
-        "gemini": prompt_gemini
+        "gemini": prompt_gemini,
+        "ollama": prompt_ollama,
     }
 
     if provider not in providers:

@@ -15,6 +15,7 @@ A ReAct (Reasoning and Acting) agent that can reason about tasks using Thought/A
 
 1. Install the package:
    ```bash
+   uv venv
    uv pip install -e .
    ```
 
@@ -223,3 +224,9 @@ from react import prompt_llm
 result = prompt_llm("Calculate 15 * 7")
 print(result["response"])
 ```
+
+## Notes 
+
+This project was forked from: https://github.com/andreiciortea/artisan
+
+OpenAI Codex was used to made updates to the original project.

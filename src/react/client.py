@@ -1,6 +1,6 @@
 """
 Multi-provider LLM client with conversation history support.
-Supports Anthropic, OpenAI, and Gemini APIs.
+Supports Anthropic, OpenAI, Gemini, and Ollama APIs.
 """
 
 import os
@@ -18,7 +18,7 @@ class LLMClient:
         Initialize LLM client.
 
         Args:
-            provider: One of 'anthropic', 'openai', 'gemini'
+            provider: One of 'anthropic', 'openai', 'gemini', 'ollama'
             config: Full config dict containing provider settings
         """
         self.provider = provider
@@ -39,6 +39,17 @@ class LLMClient:
         if self._client is None:
             from openai import OpenAI
             self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        return self._client
+
+    def _get_ollama_client(self):
+        """Lazy initialization of Ollama client via the OpenAI-compatible API."""
+        if self._client is None:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                base_url=self.settings.get("base_url", "http://localhost:11434/v1"),
+                api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+            )
         return self._client
 
     def _get_gemini_model(self):
@@ -72,6 +83,8 @@ class LLMClient:
             response = self._prompt_openai(message, system_prompt, use_history)
         elif self.provider == "gemini":
             response = self._prompt_gemini(message, system_prompt, use_history)
+        elif self.provider == "ollama":
+            response = self._prompt_ollama(message, system_prompt, use_history)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
@@ -162,6 +175,30 @@ class LLMClient:
 
         response = model.generate_content(contents, generation_config=generation_config)
         return response.text
+
+    def _prompt_ollama(
+        self,
+        message: str,
+        system_prompt: Optional[str],
+        use_history: bool
+    ) -> str:
+        """Send prompt to a local Ollama instance using its OpenAI-compatible API."""
+        client = self._get_ollama_client()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if use_history:
+            messages.extend(self.history)
+        messages.append({"role": "user", "content": message})
+
+        response = client.chat.completions.create(
+            model=self.settings["model"],
+            max_tokens=self.settings["max_tokens"],
+            temperature=self.settings["temperature"],
+            messages=messages
+        )
+        return response.choices[0].message.content
 
     def clear_history(self):
         """Clear conversation history."""

@@ -1,22 +1,21 @@
-#!/usr/bin/env python3
 """
-Baseline LLM prompting script - direct prompting without ReAct framework.
+Baseline LLM prompting - direct prompting without ReAct framework.
 Supports Anthropic, OpenAI, and Gemini APIs.
 Used for comparison against the ReAct agent.
 """
 
-import os
+import argparse
 import json
+import os
 import yaml
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+load_dotenv("config/.env")
 
 
-def load_config(config_path: str = "config.yaml") -> dict:
+def load_config(config_path: str = "config/config.yaml") -> dict:
     """Load configuration from YAML file."""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
@@ -114,7 +113,7 @@ def log_response(
     return str(filepath)
 
 
-def prompt_llm(prompt: str, config_path: str = "config.yaml") -> dict:
+def prompt_llm(prompt: str, config_path: str = "config/config.yaml") -> dict:
     """
     Send prompt to configured LLM provider and log response.
 
@@ -146,10 +145,8 @@ def prompt_llm(prompt: str, config_path: str = "config.yaml") -> dict:
 
 def main():
     """Interactive prompt loop."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Baseline LLM prompting (no ReAct framework)")
-    parser.add_argument("-c", "--config", default="config.yaml", help="Config file path")
+    parser.add_argument("-c", "--config", default="config/config.yaml", help="Config file path")
     parser.add_argument("-p", "--prompt", help="Single prompt (non-interactive)")
     parser.add_argument("-f", "--file", help="Read prompt from file")
     args = parser.parse_args()

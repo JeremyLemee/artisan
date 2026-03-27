@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Secure secrets manager for generated tools.
 
@@ -11,12 +10,17 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+
+# Load tool secrets into environment (values are only accessible via get_secret allowlist)
+load_dotenv("config/.env.tools")
+
 
 class SecretsManager:
     """
     Secure secrets manager that provides runtime access to API keys and secrets.
 
-    The agent can reference secret names (e.g., "OPENWEATHER_API_KEY") but
+    The agent can reference secret names (e.g., "OPENWEATHER_TOOL_API_KEY") but
     never receives the actual secret values. Tools retrieve secrets at
     execution time using get_secret().
     """
@@ -41,17 +45,16 @@ class SecretsManager:
         self._load_available_secrets()
 
     def _load_available_secrets(self):
-        """Load the list of available secret names from .env file."""
-        env_file = Path(".env.tools")
+        """Load the list of available secret names from config/.env.tools file."""
+        env_file = Path("config/.env.tools")
         if env_file.exists():
             with open(env_file, "r") as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key = line.split("=", 1)[0].strip()
-                        # Only expose keys that look like API keys/secrets
-                        if any(pattern in key.upper() for pattern in
-                               ["TOOL_API_KEY"]):
+                        # Only expose keys that look like tool API keys
+                        if "TOOL_API_KEY" in key.upper():
                             self._available_secrets.add(key)
 
     def get_secret(self, name: str) -> Optional[str]:
@@ -103,14 +106,14 @@ def get_secret(name: str) -> Optional[str]:
     API keys and other secrets at runtime.
 
     Example usage in a generated tool:
-        from secrets_manager import get_secret
+        from react.secrets import get_secret
 
-        api_key = get_secret("OPENWEATHER_API_KEY")
+        api_key = get_secret("OPENWEATHER_TOOL_API_KEY")
         if api_key is None:
-            return "Error: OPENWEATHER_API_KEY not configured"
+            return "Error: OPENWEATHER_TOOL_API_KEY not configured"
 
     Args:
-        name: The secret name (e.g., "OPENWEATHER_API_KEY")
+        name: The secret name (e.g., "OPENWEATHER_TOOL_API_KEY")
 
     Returns:
         The secret value, or None if not found

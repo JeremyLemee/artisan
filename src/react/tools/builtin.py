@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Built-in tools for the ReAct agent.
 Includes ControlTool for agent control and CalculatorTool for math operations.
@@ -30,7 +29,7 @@ class ControlTool(Tool):
     name = "control"
     description = "Agent control operations including finishing tasks and creating new tools"
 
-    def __init__(self, registry: "ToolRegistry", generated_tools_dir: str = "tools/generated"):
+    def __init__(self, registry: "ToolRegistry", generated_tools_dir: str = "src/react/tools/generated"):
         self._registry = registry
         self._generated_tools_dir = Path(generated_tools_dir)
         self._generated_tools_dir.mkdir(parents=True, exist_ok=True)

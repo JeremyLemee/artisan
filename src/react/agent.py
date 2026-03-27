@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 ReAct (Reasoning and Acting) agent with self-extending tools.
 Implements Thought/Action/Observation loops with dynamic tool creation.
@@ -14,9 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from llm_client import LLMClient
-from tools import Tool, ToolRegistry, ControlTool, CalculatorTool, FinishSignal
-from secrets_manager import list_available_secrets
+from .client import LLMClient
+from .tools import Tool, ToolRegistry, ControlTool, CalculatorTool, FinishSignal
+from .secrets import list_available_secrets
 
 
 REACT_SYSTEM_PROMPT = """You are a ReAct agent. You MUST ALWAYS respond using ONLY this exact format - no other text:
@@ -56,7 +55,7 @@ Task: Create a tool to reverse strings
 Your response:
 Thought: I need to create a string tool. I must use the Tool base class with the @operation decorator.
 Action: control.create_tool
-Action Input: {{"name": "StringTool", "description": "String manipulation operations", "code": "from tools.base import Tool, operation\\n\\nclass StringTool(Tool):\\n    name = 'string'\\n    description = 'String manipulation operations'\\n\\n    @operation\\n    def reverse(self, text: str) -> str:\\n        '''Reverse a string'''\\n        return text[::-1]"}}
+Action Input: {{"name": "StringTool", "description": "String manipulation operations", "code": "from react.tools.base import Tool, operation\\n\\nclass StringTool(Tool):\\n    name = 'string'\\n    description = 'String manipulation operations'\\n\\n    @operation\\n    def reverse(self, text: str) -> str:\\n        '''Reverse a string'''\\n        return text[::-1]"}}
 
 Observation: Tool 'string' created with operations: string.reverse
 
@@ -71,7 +70,7 @@ Task: Create a weather tool
 Your response:
 Thought: I need to create a weather tool that uses the OpenWeather API. I'll use get_secret() to securely access the API key at runtime.
 Action: control.create_tool
-Action Input: {{"name": "WeatherTool", "description": "Weather information tool", "code": "from tools.base import Tool, operation\\nfrom secrets_manager import get_secret\\nimport urllib.request\\nimport json\\n\\nclass WeatherTool(Tool):\\n    name = 'weather'\\n    description = 'Get weather information'\\n\\n    @operation\\n    def get_current(self, city: str) -> str:\\n        '''Get current weather for a city'''\\n        api_key = get_secret('OPENWEATHER_TOOL_API_KEY')\\n        if not api_key:\\n            return 'Error: OPENWEATHER_TOOL_API_KEY not configured'\\n        url = f'https://api.openweathermap.org/data/2.5/weather?q={{city}}&appid={{api_key}}&units=metric'\\n        try:\\n            with urllib.request.urlopen(url) as response:\\n                data = json.loads(response.read())\\n                return f\\\"{{data['name']}}: {{data['main']['temp']}}°C, {{data['weather'][0]['description']}}\\\"\\n        except Exception as e:\\n            return f'Error: {{e}}'"}}
+Action Input: {{"name": "WeatherTool", "description": "Weather information tool", "code": "from react.tools.base import Tool, operation\\nfrom react.secrets import get_secret\\nimport urllib.request\\nimport json\\n\\nclass WeatherTool(Tool):\\n    name = 'weather'\\n    description = 'Get weather information'\\n\\n    @operation\\n    def get_current(self, city: str) -> str:\\n        '''Get current weather for a city'''\\n        api_key = get_secret('OPENWEATHER_TOOL_API_KEY')\\n        if not api_key:\\n            return 'Error: OPENWEATHER_TOOL_API_KEY not configured'\\n        url = f'https://api.openweathermap.org/data/2.5/weather?q={{city}}&appid={{api_key}}&units=metric'\\n        try:\\n            with urllib.request.urlopen(url) as response:\\n                data = json.loads(response.read())\\n                return f\\\"{{data['name']}}: {{data['main']['temp']}}°C, {{data['weather'][0]['description']}}\\\"\\n        except Exception as e:\\n            return f'Error: {{e}}'"}}
 
 CRITICAL: You MUST use control.finish to provide your final answer. Plain text responses are NOT allowed.
 SECURITY: NEVER include actual API keys or secrets in your code. ALWAYS use get_secret('SECRET_NAME').
@@ -86,7 +85,7 @@ class ReActAgent:
         self.react_config = config.get("react", {})
         self.max_iterations = self.react_config.get("max_iterations", 10)
         self.enable_tool_creation = self.react_config.get("enable_tool_creation", True)
-        self.generated_tools_dir = self.react_config.get("generated_tools_dir", "tools/generated")
+        self.generated_tools_dir = self.react_config.get("generated_tools_dir", "src/react/tools/generated")
 
         # Initialize tool registry
         self.registry = ToolRegistry()
@@ -315,7 +314,7 @@ class ReActAgent:
     def _log_result(self, task: str, final_answer: Optional[str], iterations: int) -> str:
         """Log the ReAct trace to a file."""
         log_config = self.config.get("logging", {})
-        output_dir = Path(log_config.get("output_dir", "responses")) / self.config["provider"]
+        output_dir = Path(log_config.get("output_dir", "data/responses")) / self.config["provider"]
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now()
@@ -341,7 +340,7 @@ class ReActAgent:
         return str(filepath)
 
 
-def load_config(config_path: str = "config.yaml") -> dict:
+def load_config(config_path: str = "config/config.yaml") -> dict:
     """Load configuration from YAML file."""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
@@ -350,7 +349,7 @@ def load_config(config_path: str = "config.yaml") -> dict:
 def main():
     """Main entry point for the ReAct agent."""
     parser = argparse.ArgumentParser(description="ReAct agent with self-extending tools")
-    parser.add_argument("-c", "--config", default="config.yaml", help="Config file path")
+    parser.add_argument("-c", "--config", default="config/config.yaml", help="Config file path")
     parser.add_argument("-t", "--task", required=True, help="Task for the agent to perform")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()

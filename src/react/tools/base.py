@@ -1,12 +1,10 @@
-#!/usr/bin/env python3
 """
 Tool infrastructure for the ReAct agent.
 Provides base classes, decorators, and registry for tools.
 """
 
 import inspect
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, get_type_hints
 
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Multi-provider LLM client with conversation history support.
 Supports Anthropic, OpenAI, and Gemini APIs.
@@ -8,7 +7,7 @@ import os
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv("config/.env")
 
 
 class LLMClient:

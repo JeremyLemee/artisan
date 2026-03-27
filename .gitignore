@@ -13,11 +13,14 @@ venv/
 ENV/
 
 # Response logs
-responses/
+data/responses/
+
+#Prompts
+docs/prompts/
 
 # Generated tools (optional - uncomment to track them)
-tools/generated/*.py
-!tools/generated/__init__.py
+src/react/tools/generated/*.py
+!src/react/tools/generated/__init__.py
 
 # IDE
 .idea/

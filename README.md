@@ -1,4 +1,4 @@
-# ReAct Agent with Self-Extending Tools
+# Artisan: A ReAct Agent for Reflective Tool Management and Use
 
 A ReAct (Reasoning and Acting) agent that can reason about tasks using Thought/Action/Observation loops, use built-in tools, and dynamically generate new tools when needed.
 
@@ -7,30 +7,30 @@ A ReAct (Reasoning and Acting) agent that can reason about tasks using Thought/A
 - **ReAct Framework**: Step-by-step reasoning with tool use
 - **Multi-Provider LLM Support**: Anthropic, OpenAI, and Gemini
 - **Built-in Tools**: Calculator, control operations
-- **Dynamic Tool Creation**: Agent can create new tools at runtime
+- **Dynamic Tool Creation**: Agent can create new tools at run time
 - **Secure Secrets Management**: Tools can access API keys without exposing them to the agent
 - **Baseline Mode**: Direct prompting without ReAct framework for comparison
 
 ## Setup
 
-1. Install dependencies:
+1. Install the package:
    ```bash
-   uv pip install -r requirements.txt
+   uv pip install -e .
    ```
 
 2. Configure LLM API keys:
    ```bash
-   cp .env.example .env
-   # Edit .env with your LLM provider API keys
+   cp config/.env.example config/.env
+   # Edit config/.env with your LLM provider API keys
    ```
 
 3. (Optional) Configure tool secrets:
    ```bash
-   cp .env.tools.example .env.tools
-   # Edit .env.tools with API keys for generated tools
+   cp config/.env.tools.example config/.env.tools
+   # Edit config/.env.tools with API keys for generated tools
    ```
 
-4. (Optional) Edit `config.yaml` to select provider and model settings.
+4. (Optional) Edit `config/config.yaml` to select provider and model settings.
 
 ## Usage
 
@@ -38,29 +38,29 @@ A ReAct (Reasoning and Acting) agent that can reason about tasks using Thought/A
 
 Run the agent with a task:
 ```bash
-uv run react_agent.py -t "What is the square root of 144?"
+uv run react -t "What is the square root of 144?"
 ```
 
 With verbose trace output:
 ```bash
-uv run react_agent.py -t "Calculate 2^10" -v
+uv run react -t "Calculate 2^10" -v
 ```
 
 ### Baseline Prompting
 
 Direct prompting without ReAct framework (for comparison):
 ```bash
-uv run llm_prompt.py -p "What is 2+2?"
+uv run baseline -p "What is 2+2?"
 ```
 
 Interactive mode:
 ```bash
-uv run llm_prompt.py
+uv run baseline
 ```
 
 From file:
 ```bash
-uv run llm_prompt.py -f prompt.txt
+uv run baseline -f prompt.txt
 ```
 
 ## Built-in Tools
@@ -75,17 +75,23 @@ uv run llm_prompt.py -f prompt.txt
 
 ## Creating Tools Dynamically
 
-The agent can create new tools at runtime. Example task:
+The agent can create new tools at run time. Example task:
 
 ```bash
-uv run react_agent.py -t "Create a tool to reverse strings, then reverse 'hello world'" -v
+uv run react -t "Create a tool to reverse strings, then reverse 'hello world'" -v
 ```
 
 The agent will:
 1. Create a `StringTool` with a `reverse` operation
-2. Save it to `tools/generated/stringtool.py`
+2. Save it to `src/react/tools/generated/stringtool.py`
 3. Use `string.reverse` to reverse the string
 4. Return the result
+
+For the following task, the agent will generate a tool for suing the OpenWeather API. You need to pre-configure an OPENWEATHER_TOOL_API_KEY in `config/.env.tools`:
+
+```bash
+uv run react -t "Tell me how is the current weather in St. Gallen using the OpenWeather API"
+```
 
 Generated tools are automatically loaded on subsequent runs.
 
@@ -93,7 +99,7 @@ Generated tools are automatically loaded on subsequent runs.
 
 Tools can access API keys without the agent ever seeing the values.
 
-1. Add secrets to `.env.tools` (must contain `TOOL_API_KEY` in name):
+1. Add secrets to `config/.env.tools` (must contain `TOOL_API_KEY` in name):
    ```
    OPENWEATHER_TOOL_API_KEY=your_key_here
    ```
@@ -106,7 +112,7 @@ Tools can access API keys without the agent ever seeing the values.
 
 3. Generated tools use `get_secret()`:
    ```python
-   from secrets_manager import get_secret
+   from react.secrets import get_secret
 
    api_key = get_secret('OPENWEATHER_TOOL_API_KEY')
    ```
@@ -117,7 +123,7 @@ Tools can access API keys without the agent ever seeing the values.
 
 ## Configuration
 
-Edit `config.yaml`:
+Edit `config/config.yaml`:
 
 ```yaml
 # LLM provider: anthropic, openai, or gemini
@@ -133,17 +139,17 @@ anthropic:
 react:
   max_iterations: 10
   enable_tool_creation: true
-  generated_tools_dir: tools/generated
+  generated_tools_dir: src/react/tools/generated
 
 # Logging
 logging:
-  output_dir: responses
+  output_dir: data/responses
   format: json
 ```
 
 ## Response Logging
 
-Responses are saved to `responses/<provider>/`:
+Responses are saved to `data/responses/<provider>/`:
 
 | Mode | File Pattern | Contents |
 |------|--------------|----------|
@@ -172,26 +178,34 @@ Example ReAct log:
 
 ```
 prompting/
-├── config.yaml           # Configuration
-├── .env                  # LLM provider API keys
-├── .env.tools            # Tool secrets (secure)
-├── react_agent.py        # ReAct agent
-├── llm_client.py         # Multi-provider LLM client
-├── llm_prompt.py         # Simple prompting script
-├── secrets_manager.py    # Secure secrets access
-├── tools/
-│   ├── __init__.py
-│   ├── base.py           # Tool base class and registry
-│   ├── builtin.py        # Built-in tools
-│   └── generated/        # Dynamically generated tools
-└── responses/            # Logged responses
+├── pyproject.toml        # Package configuration
+├── config/
+│   ├── config.yaml       # Main configuration
+│   ├── .env              # LLM provider API keys
+│   └── .env.tools        # Tool secrets (secure)
+├── src/react/
+│   ├── __init__.py       # Package exports
+│   ├── agent.py          # ReAct agent
+│   ├── baseline.py       # Simple prompting script
+│   ├── client.py         # Multi-provider LLM client
+│   ├── secrets.py        # Secure secrets access
+│   └── tools/
+│       ├── __init__.py
+│       ├── base.py       # Tool base class and registry
+│       ├── builtin.py    # Built-in tools
+│       └── generated/    # Dynamically generated tools
+├── data/
+│   └── responses/        # Logged responses
+└── docs/
+    └── prompts/          # Prompt templates
 ```
 
 ## Programmatic Usage
 
 ReAct agent:
 ```python
-from react_agent import ReActAgent, load_config
+from react import ReActAgent
+from react.agent import load_config
 
 config = load_config()
 agent = ReActAgent(config)
@@ -204,7 +218,7 @@ print(result["tools_created"])
 
 Baseline prompting:
 ```python
-from llm_prompt import prompt_llm
+from react import prompt_llm
 
 result = prompt_llm("Calculate 15 * 7")
 print(result["response"])

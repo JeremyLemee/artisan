@@ -21,11 +21,11 @@ gemini:
 
 # Logging settings
 logging:
-  output_dir: responses
+  output_dir: data/responses
   format: json  # json or text
 
 # ReAct agent settings
 react:
   max_iterations: 10
   enable_tool_creation: true
-  generated_tools_dir: tools/generated
+  generated_tools_dir: src/react/tools/generated

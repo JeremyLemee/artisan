@@ -6,12 +6,16 @@ Implements Thought/Action/Observation loops with dynamic tool creation.
 import argparse
 import importlib.util
 import json
+import os
+import platform
 import re
+import subprocess
 import sys
 import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from .client import LLMClient
 from .tools import Tool, ToolRegistry, ControlTool, CalculatorTool, FinishSignal
@@ -76,16 +80,19 @@ CRITICAL: You MUST use control.finish to provide your final answer. Plain text r
 SECURITY: NEVER include actual API keys or secrets in your code. ALWAYS use get_secret('SECRET_NAME').
 """
 
+DOCKER_DONE_MARKER = "__REACT_AGENT_DONE__"
+
 
 class ReActAgent:
     """ReAct agent with Thought/Action/Observation loop."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, sandboxed: bool = False):
         self.config = config
         self.react_config = config.get("react", {})
         self.max_iterations = self.react_config.get("max_iterations", 10)
         self.enable_tool_creation = self.react_config.get("enable_tool_creation", True)
         self.generated_tools_dir = self.react_config.get("generated_tools_dir", "src/react/tools/generated")
+        self.sandboxed = sandboxed
 
         # Initialize tool registry
         self.registry = ToolRegistry()
@@ -313,8 +320,7 @@ class ReActAgent:
 
     def _log_result(self, task: str, final_answer: Optional[str], iterations: int) -> str:
         """Log the ReAct trace to a file."""
-        log_config = self.config.get("logging", {})
-        output_dir = Path(log_config.get("output_dir", "data/responses")) / self.config["provider"]
+        output_dir = _resolve_log_output_dir(self.config, self.sandboxed)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now()
@@ -334,35 +340,298 @@ class ReActAgent:
         filename = f"react_{timestamp_str}.json"
         filepath = output_dir / filename
 
-        with open(filepath, "w") as f:
-            json.dump(log_entry, f, indent=2)
+        try:
+            with open(filepath, "w") as f:
+                json.dump(log_entry, f, indent=2)
+        except OSError:
+            fallback_dir = _resolve_log_output_dir(self.config, True)
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            filepath = fallback_dir / filename
+            with open(filepath, "w") as f:
+                json.dump(log_entry, f, indent=2)
 
         return str(filepath)
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict:
     """Load configuration from YAML file."""
-    with open(config_path, "r") as f:
+    resolved_path = _resolve_config_path(config_path)
+    with open(resolved_path, "r") as f:
         return yaml.safe_load(f)
 
 
-def main():
-    """Main entry point for the ReAct agent."""
+def _repo_root() -> Path:
+    """Return the repository root directory."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(description="ReAct agent with self-extending tools")
     parser.add_argument("-c", "--config", default="config/config.yaml", help="Config file path")
     parser.add_argument("-t", "--task", required=True, help="Task for the agent to perform")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="Run the agent inside Docker with the repository mounted read-only except for generated tools",
+    )
+    parser.add_argument(
+        "--sandbox-internal",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    return parser
 
+
+def _resolve_image_name(config: dict) -> str:
+    """Return the Docker image name for sandboxed runs."""
+    return config.get("react", {}).get("docker_image", "react-agent-sandbox:latest")
+
+
+def _resolve_config_path(config_path: str) -> Path:
+    """Resolve a config path against the current directory and repository root."""
+    candidate = Path(config_path).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+
+    cwd_candidate = (Path.cwd() / candidate).resolve()
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    repo_candidate = (_repo_root() / candidate).resolve()
+    if repo_candidate.exists():
+        return repo_candidate
+
+    return cwd_candidate
+
+
+def _resolve_log_output_dir(config: dict, sandboxed: bool) -> Path:
+    """Return the output directory for logs."""
+    provider_dir = Path(config.get("provider", "unknown"))
+    if sandboxed:
+        return Path("/tmp/react-agent-logs") / provider_dir
+    return Path(config.get("logging", {}).get("output_dir", "data/responses")) / provider_dir
+
+
+def _docker_uses_host_network() -> bool:
+    """Return whether Docker should use host networking for sandboxed runs."""
+    return platform.system().lower() == "linux"
+
+
+def _resolve_config_for_docker(config_path: str) -> tuple[str, list[str]]:
+    """Resolve a config path and any extra bind mounts needed for Docker."""
+    repo_root = _repo_root().resolve()
+    host_config_path = _resolve_config_path(config_path)
+
+    try:
+        relative_path = host_config_path.relative_to(repo_root)
+    except ValueError:
+        container_path = f"/tmp/react-agent-config/{host_config_path.name}"
+        mounts = ["-v", f"{host_config_path}:{container_path}:ro"]
+        return container_path, mounts
+
+    return f"/workspace/{relative_path.as_posix()}", []
+
+
+def _build_docker_command(args: argparse.Namespace, config: dict, detach: bool = False) -> list[str]:
+    """Build the docker run command for sandboxed execution."""
+    repo_root = _repo_root()
+    generated_dir = repo_root / config.get("react", {}).get("generated_tools_dir", "src/react/tools/generated")
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    docker_config_path, config_mounts = _resolve_config_for_docker(args.config)
+
+    image_name = _resolve_image_name(config)
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--workdir",
+        "/workspace",
+        "-e",
+        "PYTHONPATH=/workspace/src",
+        "-v",
+        f"{repo_root}:/workspace:ro",
+        "-v",
+        f"{generated_dir.resolve()}:/workspace/{generated_dir.relative_to(repo_root).as_posix()}:rw",
+    ]
+
+    if detach:
+        command.append("--detach")
+
+    if _docker_uses_host_network():
+        command.extend(["--network", "host"])
+    else:
+        command.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+    command.extend(config_mounts)
+
+    for env_file in ("config/.env", "config/.env.tools"):
+        env_path = repo_root / env_file
+        if env_path.exists():
+            command.extend(["--env-file", str(env_path)])
+
+    command.extend(["-e", "REACT_AGENT_DONE_MARKER=1"])
+
+    command.extend([
+        image_name,
+        "--sandbox-internal",
+        "--config",
+        docker_config_path,
+        "--task",
+        args.task,
+    ])
+
+    if args.verbose:
+        command.append("--verbose")
+
+    return command
+
+
+def _ensure_sandbox_image(image_name: str) -> None:
+    """Build the sandbox image if it does not already exist."""
+    inspect_result = subprocess.run(
+        ["docker", "image", "inspect", image_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if inspect_result.returncode == 0:
+        return
+
+    dockerfile = _repo_root() / "Dockerfile"
+    build_result = subprocess.run(
+        [
+            "docker",
+            "build",
+            "-f",
+            str(dockerfile),
+            "-t",
+            image_name,
+            str(_repo_root()),
+        ],
+        check=False,
+    )
+    if build_result.returncode != 0:
+        raise RuntimeError(f"Failed to build Docker sandbox image '{image_name}'")
+
+
+def _stop_docker_container(container_id: str) -> None:
+    """Stop a Docker container if it is still running."""
+    subprocess.run(
+        ["docker", "stop", "--time", "1", container_id],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def _remove_docker_container(container_id: str) -> None:
+    """Remove a Docker container if it still exists."""
+    subprocess.run(
+        ["docker", "rm", "-f", container_id],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def _docker_container_running(container_id: str) -> bool:
+    """Return whether a Docker container is still running."""
+    inspect_result = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", container_id],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return inspect_result.returncode == 0 and inspect_result.stdout.strip() == "true"
+
+
+def _stream_docker_logs(container_id: str) -> bool:
+    """Stream Docker logs to stdout and return whether the agent completion marker was seen."""
+    completed = False
+    logs_process = subprocess.Popen(
+        ["docker", "logs", "-f", container_id],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    try:
+        assert logs_process.stdout is not None
+        for line in logs_process.stdout:
+            if DOCKER_DONE_MARKER in line:
+                completed = True
+                break
+            print(line, end="")
+    finally:
+        if logs_process.stdout is not None:
+            logs_process.stdout.close()
+        logs_process.terminate()
+        try:
+            logs_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            logs_process.kill()
+            logs_process.wait()
+
+    return completed
+
+
+def _run_in_docker(args: argparse.Namespace, config: dict) -> int:
+    """Execute the agent inside Docker."""
+    image_name = _resolve_image_name(config)
+    _ensure_sandbox_image(image_name)
+    start_result = subprocess.run(
+        _build_docker_command(args, config, detach=True),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if start_result.returncode != 0:
+        if start_result.stdout:
+            print(start_result.stdout, end="")
+        if start_result.stderr:
+            print(start_result.stderr, end="", file=sys.stderr)
+        return start_result.returncode
+
+    container_id = start_result.stdout.strip().splitlines()[-1]
+
+    try:
+        completed = _stream_docker_logs(container_id)
+        if completed and _docker_container_running(container_id):
+            _stop_docker_container(container_id)
+        wait_result = subprocess.run(
+            ["docker", "wait", container_id],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if wait_result.stdout.strip():
+            return int(wait_result.stdout.strip())
+        return wait_result.returncode
+    finally:
+        _stop_docker_container(container_id)
+        _remove_docker_container(container_id)
+
+
+def _run_agent(args: argparse.Namespace, sandboxed: bool = False) -> dict:
+    """Run the agent locally and return the result payload."""
     config = load_config(args.config)
+    if sandboxed:
+        config = _prepare_sandbox_config(config)
     print(f"Using provider: {config['provider']} ({config[config['provider']]['model']})")
     print("Mode: ReAct")
+    if sandboxed:
+        print("Execution: Docker sandbox")
 
-    agent = ReActAgent(config)
-    result = agent.run(args.task)
+    agent = ReActAgent(config, sandboxed=sandboxed)
+    return agent.run(args.task)
 
-    # Print trace if verbose
-    if args.verbose:
+
+def _print_result(result: dict, verbose: bool) -> None:
+    """Print the agent result to stdout."""
+    if verbose:
         print("\n--- ReAct Trace ---")
         for entry in result["trace"]:
             if entry["type"] == "thought":
@@ -374,12 +643,71 @@ def main():
                 print(f"Observation: {entry['content']}")
         print("--- End Trace ---\n")
 
-    # Print result
     print(f"\nFinal Answer: {result['final_answer']}")
     print(f"Iterations: {result['iterations']}")
     if result["tools_created"]:
         print(f"Tools Created: {', '.join(result['tools_created'])}")
     print(f"Logged to: {result['log_file']}")
+    if os.getenv("REACT_AGENT_DONE_MARKER") == "1":
+        print(DOCKER_DONE_MARKER)
+
+
+def _prepare_sandbox_config(config: dict) -> dict:
+    """Adjust provider settings for Docker sandbox execution."""
+    if config.get("provider") != "ollama":
+        return config
+
+    ollama_config = dict(config.get("ollama", {}))
+    base_url = ollama_config.get("base_url")
+    if not base_url:
+        return config
+
+    parsed = urlparse(base_url)
+    if parsed.hostname not in {"localhost", "127.0.0.1", "host.docker.internal"}:
+        return config
+
+    candidates = [base_url]
+    host = "host.docker.internal"
+    if parsed.port is not None:
+        netloc = f"{host}:{parsed.port}"
+    else:
+        netloc = host
+    host_gateway_url = parsed._replace(netloc=netloc).geturl()
+
+    if _docker_uses_host_network():
+        candidates.append(host_gateway_url)
+    else:
+        candidates = [host_gateway_url, base_url]
+
+    ollama_config["base_url"] = candidates[0]
+    ollama_config["base_url_candidates"] = candidates
+    ollama_config.setdefault("probe_timeout", 3)
+    updated_config = dict(config)
+    updated_config["ollama"] = ollama_config
+    return updated_config
+
+
+def main():
+    """Main entry point for the ReAct agent."""
+    parser = _build_parser()
+    args = parser.parse_args()
+    config = load_config(args.config)
+
+    if args.sandbox and not args.sandbox_internal:
+        raise SystemExit(_run_in_docker(args, config))
+
+    try:
+        result = _run_agent(args, sandboxed=args.sandbox_internal)
+    except Exception as exc:
+        if args.sandbox_internal:
+            raise
+        print(
+            f"Local execution failed ({exc}). Retrying inside Docker sandbox...",
+            file=sys.stderr,
+        )
+        raise SystemExit(_run_in_docker(args, config))
+
+    _print_result(result, args.verbose)
 
 
 if __name__ == "__main__":

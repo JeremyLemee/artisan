@@ -4,6 +4,8 @@ Supports Anthropic, OpenAI, Gemini, and Ollama APIs.
 """
 
 import os
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -26,6 +28,7 @@ class LLMClient:
         self.settings = config[provider]
         self.history: list[dict] = []
         self._client = None
+        self._resolved_ollama_base_url: Optional[str] = None
 
     def _get_anthropic_client(self):
         """Lazy initialization of Anthropic client."""
@@ -45,12 +48,44 @@ class LLMClient:
         """Lazy initialization of Ollama client via the OpenAI-compatible API."""
         if self._client is None:
             from openai import OpenAI
+            base_url = self._resolve_ollama_base_url()
 
             self._client = OpenAI(
-                base_url=self.settings.get("base_url", "http://localhost:11434/v1"),
+                base_url=base_url,
                 api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+                timeout=self.settings.get("timeout", 300),
             )
         return self._client
+
+    def _resolve_ollama_base_url(self) -> str:
+        """Return a reachable Ollama base URL, probing candidates when configured."""
+        if self._resolved_ollama_base_url is not None:
+            return self._resolved_ollama_base_url
+
+        base_url = self.settings.get("base_url", "http://localhost:11434/v1")
+        candidates = self.settings.get("base_url_candidates", [base_url])
+        probe_timeout = self.settings.get("probe_timeout", 3)
+
+        for candidate in candidates:
+            if self._ollama_healthcheck(candidate, probe_timeout):
+                self._resolved_ollama_base_url = candidate
+                self.settings["base_url"] = candidate
+                return candidate
+
+        tried = ", ".join(candidates)
+        raise RuntimeError(f"Could not reach Ollama from configured base URLs: {tried}")
+
+    def _ollama_healthcheck(self, base_url: str, timeout: int | float) -> bool:
+        """Return whether the Ollama API responds for the given base URL."""
+        parsed = urlparse(base_url)
+        api_root = parsed._replace(path="", params="", query="", fragment="")
+        tags_url = api_root.geturl().rstrip("/") + "/api/tags"
+
+        try:
+            with urlopen(tags_url, timeout=timeout) as response:
+                return 200 <= response.status < 500
+        except Exception:
+            return False
 
     def _get_gemini_model(self):
         """Lazy initialization of Gemini model."""
@@ -183,6 +218,8 @@ class LLMClient:
         use_history: bool
     ) -> str:
         """Send prompt to a local Ollama instance using its OpenAI-compatible API."""
+        from openai import APITimeoutError
+
         client = self._get_ollama_client()
 
         messages = []
@@ -192,12 +229,20 @@ class LLMClient:
             messages.extend(self.history)
         messages.append({"role": "user", "content": message})
 
-        response = client.chat.completions.create(
-            model=self.settings["model"],
-            max_tokens=self.settings["max_tokens"],
-            temperature=self.settings["temperature"],
-            messages=messages
-        )
+        try:
+            response = client.chat.completions.create(
+                model=self.settings["model"],
+                max_tokens=self.settings["max_tokens"],
+                temperature=self.settings["temperature"],
+                messages=messages
+            )
+        except APITimeoutError as exc:
+            raise RuntimeError(
+                "Ollama request timed out. "
+                f"base_url={self.settings.get('base_url', 'http://localhost:11434/v1')}, "
+                f"timeout={self.settings.get('timeout', 300)}s"
+            ) from exc
+
         return response.choices[0].message.content
 
     def clear_history(self):

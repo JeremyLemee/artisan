@@ -42,6 +42,8 @@ Run the agent with a task:
 uv run react -t "What is the square root of 144?"
 ```
 
+Use the ``--sandbox`` option to run the agent in a Docker sandbox.
+
 With verbose trace output:
 ```bash
 uv run react -t "Calculate 2^10" -v
